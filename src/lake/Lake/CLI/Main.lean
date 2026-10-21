@@ -890,7 +890,7 @@ protected def clean : CliM PUnit := do
       return cache.dir
     else
       error "no cache to delete; no workspace configuration found and no system cache detected"
-  removeDirAllIfExists dir
+  Cache.clean ⟨dir⟩
 
 protected def help : CliM PUnit := do
   IO.println <| helpCache <| ← takeArgD ""

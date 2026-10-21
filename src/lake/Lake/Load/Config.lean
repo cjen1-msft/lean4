@@ -72,12 +72,14 @@ public structure LoadConfig where
   scope : String := ""
   /-- The URL to this package's Git remote (if any). -/
   remoteUrl : String := ""
+  /-- Workspace-private state for a dependency with immutable shared sources. -/
+  privateStateDir? : Option FilePath := none
 
 namespace LoadConfig
 
 /-- The package's Lake directory (for Lake temporary files). -/
 @[inline] public def lakeDir (cfg : LoadConfig) : FilePath :=
-  cfg.pkgDir / defaultLakeDir
+  cfg.privateStateDir?.getD cfg.pkgDir / defaultLakeDir
 
 /-- The absolute path where compiled configurations are stored. -/
 @[inline] public def configDir (cfg : LoadConfig) : FilePath :=

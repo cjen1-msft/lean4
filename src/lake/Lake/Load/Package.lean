@@ -38,7 +38,7 @@ public def mkPackage
   let {
     pkgDir := dir, relPkgDir := relDir,
     configFile, relConfigFile, relManifestFile,
-    scope, remoteUrl, ..} := loadCfg
+    scope, remoteUrl, privateStateDir?, ..} := loadCfg
   let {
     depConfigs, defaultTargets, scripts, defaultScripts, testDriver, lintDriver
     -- destructing needed for type-correctness
@@ -48,7 +48,7 @@ public def mkPackage
   {
     wsIdx, baseName, keyName, origName, config
     dir, relDir, configFile, relConfigFile, relManifestFile
-    scope, remoteUrl
+    scope, remoteUrl, privateStateDir?
     depConfigs
     targetDecls, targetDeclMap, defaultTargets
     scripts, defaultScripts

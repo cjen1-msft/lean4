@@ -60,6 +60,10 @@ public structure Env where
   If `none`, no suitable system directory for the cache exists.
   -/
   lakeSystemCache? : Option Cache := none
+  /-- Whether to share immutable Git dependency sources (`LAKE_SHARED_PACKAGES`). -/
+  sharedPackages : Bool := true
+  /-- Dependencies to keep editable and private (`LAKE_PRIVATE_PACKAGES`, comma-separated). -/
+  privatePackages : Array String := #[]
   /-- The path to the system Lake configuration (i.e., `LAKE_CONFIG`). -/
   lakeConfig? : Option FilePath
   /-- The authentication key for cache uploads (i.e., `LAKE_CACHE_KEY`). -/
@@ -182,6 +186,9 @@ public def compute
     cacheRevisionEndpoint? := (← IO.getEnv "LAKE_CACHE_REVISION_ENDPOINT").map normalizeUrl
     cacheService? := (← IO.getEnv "LAKE_CACHE_SERVICE").map (.ofString ·.trimAscii.copy)
     githashOverride := (← IO.getEnv "LEAN_GITHASH").getD ""
+    sharedPackages := (← IO.getEnv "LAKE_SHARED_PACKAGES").bind envToBool? |>.getD true
+    privatePackages := (← IO.getEnv "LAKE_PRIVATE_PACKAGES").getD "" |>.split ',' |>.toArray
+      |>.map (·.trimAscii.copy) |>.filter (!·.isEmpty)
     toolchain
     initLeanPath := ← getSearchPath "LEAN_PATH",
     initLeanSrcPath := ← getSearchPath "LEAN_SRC_PATH",

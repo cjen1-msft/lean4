@@ -394,6 +394,33 @@ public structure Cache where
 
 namespace Cache
 
+/-- Immutable Git sources and the locks protecting their publication. -/
+@[inline] public def packagesDir (cache : Cache) : FilePath :=
+  cache.dir / "packages"
+
+/-- Remove cached artifacts without invalidating workspaces' shared-source links. -/
+public def clean (cache : Cache) : IO Unit := do
+  let metadata ← try cache.dir.symlinkMetadata catch
+    | .noFileOrDirectory .. => return
+    | e => throw e
+  if metadata.type == .symlink then
+    removeFileIfExists cache.dir
+    return
+  let entries ← try cache.dir.readDir catch
+    | .noFileOrDirectory .. => return
+    | e => throw e
+  -- Never traverse sources, even if another process creates them during cleanup.
+  for ent in entries do
+    unless ent.fileName == "packages" do
+      if (← ent.path.symlinkMetadata).type == .dir then
+        removeDirAllIfExists ent.path
+      else
+        removeFileIfExists ent.path
+  unless (← cache.packagesDir.isDir) do
+    try IO.FS.removeDir cache.dir catch
+      | .noFileOrDirectory .. => pure ()
+      | e => throw e
+
 /-- Returns the artifact directory for the Lake cache. -/
 @[inline] public def artifactDir (cache : Cache) : FilePath :=
   cache.dir / "artifacts"

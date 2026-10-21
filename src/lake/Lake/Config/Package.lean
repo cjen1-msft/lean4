@@ -50,6 +50,8 @@ public structure Package where
   scope : String
   /-- The URL to this package's Git remote. -/
   remoteUrl : String
+  /-- Workspace-private package state for immutable shared sources. -/
+  privateStateDir? : Option FilePath := none
   /-- Dependency configurations for the package. -/
   depConfigs : Array Dependency := #[]
   /-- **For internal use only.** Workspace indices of the resolved direct dependencies of the package. -/
@@ -208,9 +210,9 @@ public def id? (self : Package) : Option PkgId :=
 @[inline] public def relLakeDir (_ : Package) : FilePath :=
   defaultLakeDir
 
-/-- The full path to the package's Lake directory (i.e, `dir` joined with `relLakeDir`). -/
+/-- The package's Lake directory, relocated to private state when sources are shared. -/
 @[inline] public def lakeDir (self : Package) : FilePath :=
-  self.dir / self.relLakeDir
+  self.privateStateDir?.getD self.dir / self.relLakeDir
 
 /-- The path for storing the package's remote dependencies relative to `dir` (i.e., `packagesDir`). -/
 @[inline] public def relPkgsDir (self : Package) : FilePath :=
@@ -224,9 +226,9 @@ public def id? (self : Package) : Option PkgId :=
 @[inline] public def manifestFile (self : Package) : FilePath :=
   self.dir / self.relManifestFile
 
-/-- The package's `dir` joined with its `buildDir` configuration. -/
+/-- The configured build directory, rooted in private state when sources are shared. -/
 @[inline] public def buildDir (self : Package) : FilePath :=
-  self.dir / self.config.buildDir.normalize
+  self.privateStateDir?.getD self.dir / self.config.buildDir.normalize
 
 /-- The package's `testDriverArgs` configuration. -/
 @[inline] public def testDriverArgs (self : Package) : Array String :=

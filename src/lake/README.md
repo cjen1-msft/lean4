@@ -29,11 +29,66 @@ A Lake configuration file defines the package's basic configuration. It also typ
   + [Lean `require`](#lean-require)
   + [Supported Sources](#supported-sources)
   + [TOML `require`](#toml-require)
+* [Shared Dependency Packages](#shared-dependency-packages)
 * [GitHub Release Builds](#github-release-builds)
 * [Writing and Running Scripts](#writing-and-running-scripts)
 * [Building and Running Lake from the Source](#building-and-running-lake-from-the-source)
   + [Building with Nix Flakes](#building-with-nix-flakes)
   + [Augmenting Lake's Search Path](#augmenting-lakes-search-path)
+
+## Shared Dependency Packages
+
+On Unix, Lake automatically shares new Git dependencies through its existing local cache.
+Independent workspaces using the same repository and resolved commit share one read-only
+checkout. Repository subdirectory dependencies share the containing checkout.
+The project-facing `.lake/packages/<name>` path is a symbolic link.
+Existing private checkouts, including edited checkouts, and local/path dependencies stay private.
+Windows currently retains private Git checkouts.
+
+The controls are environment variables, so a shell, CI job, or development environment can
+choose its own policy without changing a project's package configuration:
+
+| Variable | Behavior |
+| --- | --- |
+| `LAKE_CACHE_DIR` | Select the cache used for both shared sources and build artifacts. An empty value disables the system cache and shared sources. If unset, Lake uses its normal toolchain or user cache. |
+| `LAKE_SHARED_PACKAGES` | `false` disables source sharing. If unset, new Git dependencies are shared where supported. |
+| `LAKE_PRIVATE_PACKAGES` | A comma-separated list of dependency names to materialize as private, editable checkouts. |
+
+For example, `LAKE_CACHE_DIR=/cache/team-a lake build` and
+`LAKE_CACHE_DIR=/cache/team-b lake build` use independent caches.
+`LAKE_PRIVATE_PACKAGES=mathlib lake build` detaches that workspace's existing shared mathlib
+checkout before loading it. Disabling sharing also detaches existing shared dependencies.
+Detachment copies sources through Git; it does not copy or modify the shared repository.
+Subsequent invocations preserve the private checkout and its edits.
+
+Only sources are immutable. A shared package's writable state, including build outputs and
+downloaded build archives, is rooted at `.lake/dependency-builds/<name>` in each workspace.
+Compiled package configurations remain in the workspace's `.lake/config`.
+Root-package build paths are unchanged. Package code must use Lake's `Package.buildDir` and
+`Package.lakeDir` accessors instead of assuming writable directories underneath `Package.dir`.
+Custom targets, scripts, post-update hooks, or external cache tools which write into source
+directories require a private dependency override.
+Git packages whose relative path dependencies escape their repository are automatically
+detached, preserving workspace-relative sibling paths. If such a dependency is declared by
+a nested path package, disable sharing for the containing Git dependency.
+
+Shared packages enable Lake's native artifact cache and restore artifacts into their private
+build directories by default. Existing explicit artifact-cache settings still take precedence.
+The native per-target traces check relevant inputs, imported dependencies, Lean's toolchain hash,
+platform-dependent inputs, and build options. Compatible artifacts are reused with hard links,
+or copied when hard links are unavailable. Trace and hash files remain private.
+An absent or incompatible target is built privately and cached normally; `--no-build` reports
+that it needs rebuilding instead of modifying a shared source entry or reporting success.
+Custom targets only share artifacts when they use Lake's artifact-caching build helpers.
+
+Sources are prepared behind an operating-system file lock and published by renaming a complete,
+read-only entry. Interrupted preparations are discarded on the next attempt.
+`lake update` selects another source entry rather than checking out a revision in a published
+entry. `lake clean` removes only the workspace's own build outputs.
+`lake cache clean` removes build artifacts and mappings, but retains shared sources and their
+locks: an inactive workspace can still hold a symbolic link to an entry.
+Automatic eviction of shared sources is not supported. Do not manually remove source entries
+until all referring workspaces have been detached or removed.
 
 ## Getting Lake
 

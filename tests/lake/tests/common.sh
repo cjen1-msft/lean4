@@ -10,6 +10,9 @@ echo "ELAN=$ELAN"
 LAKE=${LAKE:-lake}
 echo "LAKE=$LAKE"
 
+# Legacy fixtures intentionally edit dependency checkouts. Sharing has its own suite.
+export LAKE_SHARED_PACKAGES=${LAKE_SHARED_PACKAGES:-false}
+
 # Platform-specific configuration
 
 OS="${OS:-}"

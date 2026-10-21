@@ -157,9 +157,13 @@ public def getHeadRevision (repo : GitRepo) : LogIO GitRev := do
   error s!"{repo}: could not resolve 'HEAD' to a commit; \
     the repository may be corrupt, so you may need to remove it and try again"
 
-public def fetchRevision? (repo : GitRepo) (remote : String) (rev : GitRev) : LogIO (Option GitRev) := do
+public def fetchRevision? (repo : GitRepo) (remote : String) (rev : GitRev)
+  (filter := true)
+: LogIO (Option GitRev) := do
   -- `--refetch` is expensive and not needed here as Lake uses a single, fixed filter
-  let args := #["fetch", "--tags", "--force", "--filter=tree:0", remote, rev]
+  let args := #["fetch", "--tags", "--force"]
+  let args := if filter then args.push "--filter=tree:0" else args
+  let args := args ++ #[remote, rev]
   if (← repo.testExecGit args) then
     let some rev ← repo.resolveRevision? .fetchHead
       | error s!"{repo}: could not resolve 'FETCH_HEAD' to a commit after fetching; \
