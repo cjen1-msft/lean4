@@ -46,10 +46,17 @@ public def writeBinFileIfNew (path : FilePath) (content : ByteArray) : IO Unit :
 
 /--
 Remove a directory and all its contents.
+If the directory itself is a symlink, remove the link without following it.
 Like {lean}`IO.FS.removeDirAll`, but does not fail if {lean}`path` does not exist
 or if a file is first deleted by a racing process.
 -/
 public partial def removeDirAllIfExists (path : FilePath) : IO Unit := do
+  let metadata ← try path.symlinkMetadata catch
+    | .noFileOrDirectory .. => return
+    | e => throw e
+  if metadata.type == .symlink then
+    removeFileIfExists path
+    return
   let ents ← try path.readDir catch
     | .noFileOrDirectory .. => return -- path did not exist or something else was faster
     | e => throw e
