@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 source ../common.sh
 
+# This fixture creates the dependency's build directory directly.
+export LAKE_PRIVATE_PACKAGES=Cli
+
 ./clean.sh
 
 export ELAN_TOOLCHAIN=test

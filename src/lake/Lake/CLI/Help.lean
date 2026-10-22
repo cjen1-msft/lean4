@@ -768,7 +768,7 @@ via `--platform` and `--toolchain` (if needed). Similarly, the source revision
 the outputs correspond to must be manually specified via `--rev`."
 
 def helpCacheClean :=
-"Remove build artifacts from the local Lake cache
+"Removes build artifacts from the local Lake cache
 
 USAGE:
   lake cache clean

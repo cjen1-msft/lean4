@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 source ../common.sh
 
+# This fixture tests editable checkouts and partial-clone metadata.
+export LAKE_PRIVATE_PACKAGES=hello
+
 ./clean.sh
 
 # Test Lake's management of a single Git-cloned dependency.

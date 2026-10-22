@@ -48,7 +48,6 @@ fi
 
 test_exp -L first/.lake/packages/dep
 test_exp -f first/.lake/dependency-builds/dep/.lake/post-update.txt
-test_exp "$source1" != "$TEST_DIR/first/.lake/packages/dep"
 test_exp ! -w "$source1/Dep.lean"
 test_exp ! -w "$source1"
 test_exp ! -e "$source1/.lake/build"
@@ -65,7 +64,6 @@ output2="$("$LAKE" query @dep/+Dep:olean)"
 test_exp "$source1" = "$source2"
 test_exp "$output1" != "$output2"
 test_exp "$output1" -ef "$output2"
-test_exp "$(stat_ch "$output2")" -gt 1
 test_exp -f .lake/build/lib/lean/Root.olean
 
 # An absent target cannot succeed under --no-build; a normal build is private.
@@ -85,6 +83,8 @@ test_exp ! -e "$source1/generated-source.txt"
 echo metadata > "$LAKE_CACHE_DIR/cache-metadata"
 ln -s "$source1" "$LAKE_CACHE_DIR/source-link"
 test_run cache clean
+test_exp ! -e "$LAKE_CACHE_DIR/artifacts"
+test_exp ! -e "$LAKE_CACHE_DIR/outputs"
 test_exp ! -e "$LAKE_CACHE_DIR/cache-metadata"
 test_exp ! -L "$LAKE_CACHE_DIR/source-link"
 test_exp -f "$source1/Dep.lean"

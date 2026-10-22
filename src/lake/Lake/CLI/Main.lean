@@ -890,7 +890,28 @@ protected def clean : CliM PUnit := do
       return cache.dir
     else
       error "no cache to delete; no workspace configuration found and no system cache detected"
-  Cache.clean ⟨dir⟩
+  liftM (m := IO) do
+    let packagesDir := (Cache.mk dir).packagesDir
+    let metadata ← try dir.symlinkMetadata catch
+      | .noFileOrDirectory .. => return
+      | e => throw e
+    if metadata.type == .symlink then
+      removeFileIfExists dir
+      return
+    let entries ← try dir.readDir catch
+      | .noFileOrDirectory .. => return
+      | e => throw e
+    -- Never traverse sources, even if another process creates them during cleanup.
+    for ent in entries do
+      unless ent.path == packagesDir do
+        if (← ent.path.symlinkMetadata).type == .dir then
+          removeDirAllIfExists ent.path
+        else
+          removeFileIfExists ent.path
+    unless (← packagesDir.isDir) do
+      try IO.FS.removeDir dir catch
+        | .noFileOrDirectory .. => pure ()
+        | e => throw e
 
 protected def help : CliM PUnit := do
   IO.println <| helpCache <| ← takeArgD ""
