@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 source ../common.sh
 
+# This fixture builds Cli as a standalone workspace inside its checkout.
+export LAKE_PRIVATE_PACKAGES=Cli
+
 ./clean.sh
 
 # Test the functionality of the Reservoir (or other remote) cache

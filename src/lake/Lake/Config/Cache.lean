@@ -394,6 +394,10 @@ public structure Cache where
 
 namespace Cache
 
+/-- Immutable Git sources and the locks protecting their publication. -/
+@[inline] public def packagesDir (cache : Cache) : FilePath :=
+  cache.dir / "packages"
+
 /-- Returns the artifact directory for the Lake cache. -/
 @[inline] public def artifactDir (cache : Cache) : FilePath :=
   cache.dir / "artifacts"

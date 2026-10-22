@@ -71,7 +71,8 @@ require c from git "../c" @ "master"
 require b from git "../b" @ "master"
 EOF
 # make sure we pick up the version from b's manifest (a@1)
-$LAKE update -v 2>&1 | grep --color 'first commit in a'
+$LAKE update -v
+test_cmd_eq "$(git -C ../a rev-parse init)" git -C .lake/packages/a rev-parse HEAD
 git add .
 git config user.name test
 git config user.email test@example.com

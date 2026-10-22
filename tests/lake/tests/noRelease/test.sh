@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 source ../common.sh
 
+# This fixture changes dependency tags and writes into its build directory directly.
+export LAKE_PRIVATE_PACKAGES=dep
+
 ./clean.sh
 
 # Copy test data to a working directory to avoid initializing a Git repository

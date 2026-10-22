@@ -1,0 +1,5 @@
+name = "subdep"
+defaultTargets = ["Nested"]
+
+[[lean_lib]]
+name = "Nested"

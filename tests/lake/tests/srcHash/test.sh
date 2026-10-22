@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 source ../common.sh
 
+# This fixture writes generated files and hashes into dependency sources.
+export LAKE_PRIVATE_PACKAGES=dep
+
 # Tests that stale `.hash` files in the source tree are cleared
 # when a git dependency is checked out to a new revision.
 #

@@ -177,10 +177,11 @@ Returns whether the package should restore its artifacts from the Lake artifact 
 
 If the package has not configured this option itself through
 {lean}`Package.restoreAllArtifacts?`, this will default to the workspace configuration.
-If not configured at all, this defaults to {lean}`false`.
+If not configured at all, this defaults to {lean}`true` for shared-source packages
+and {lean}`false` otherwise.
 -/
 @[inline] public def Package.restoreAllArtifacts [MonadWorkspace m] (self : Package) : m Bool :=
-  (self.restoreAllArtifacts? <|> ·.restoreAllArtifacts? |>.getD false) <$> getWorkspace
+  (self.restoreAllArtifacts? <|> ·.restoreAllArtifacts? |>.getD self.privateStateDir?.isSome) <$> getWorkspace
 
 /--
 Returns whether the package should retrieve its artifacts from the Lake artifact cache.
@@ -197,10 +198,11 @@ Returns whether the package should store its artifacts in the Lake artifact cach
 
 If the package has not configured the artifact cache itself through
 {lean}`Package.enableArtifactCache?`, this will default to the workspace configuration.
-If not configured at all, this defaults to {lean}`false`.
+If not configured at all, this defaults to {lean}`true` for shared-source packages
+and {lean}`false` otherwise.
 -/
 @[inline] public def Package.isArtifactCacheWritable [MonadWorkspace m] (self : Package) : m Bool :=
-  (self.enableArtifactCache? <|> ·.enableArtifactCache? |>.getD false) <$> getWorkspace
+  (self.enableArtifactCache? <|> ·.enableArtifactCache? |>.getD self.privateStateDir?.isSome) <$> getWorkspace
 
 @[inherit_doc isArtifactCacheWritable, deprecated isArtifactCacheWritable (since := "2026-02-03")]
 public abbrev Package.isArtifactCacheEnabled [MonadWorkspace m] (self : Package) : m Bool :=

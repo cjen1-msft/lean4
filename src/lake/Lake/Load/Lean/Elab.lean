@@ -169,6 +169,7 @@ structure ConfigTrace where
   platform : String
   leanHash : String
   configHash : Hash
+  pkgDir : String
   options : NameMap String
   deriving ToJson, FromJson
 
@@ -245,7 +246,8 @@ public def importConfigFile (cfg : LoadConfig) : LogIO Environment := do
     | .ok _ | .error (.noFileOrDirectory ..) =>
       h.putStrLn <| Json.pretty <| toJson
         {platform := System.Platform.target, leanHash := cfg.lakeEnv.leanGithash,
-          configHash, idx := cfg.pkgIdx, name := cfg.pkgName, options := lakeOpts : ConfigTrace}
+          configHash, pkgDir := cfg.pkgDir.toString,
+          idx := cfg.pkgIdx, name := cfg.pkgName, options := lakeOpts : ConfigTrace}
       -- Flush before `truncate` (which sets the file size without flushing buffered
       -- writes) and before the slow elaboration below, so a process killed
       -- mid-elaboration leaves a valid trace rather than a NUL-byte size placeholder.
@@ -272,6 +274,7 @@ public def importConfigFile (cfg : LoadConfig) : LogIO Environment := do
         | .ok (trace : ConfigTrace) =>
           let upToDate := (← olean.pathExists) ∧
             trace.idx = cfg.pkgIdx ∧ trace.name = cfg.pkgName ∧  trace.configHash = configHash ∧
+            trace.pkgDir = cfg.pkgDir.toString ∧
             trace.platform = System.Platform.target ∧  trace.leanHash = cfg.lakeEnv.leanGithash
           if upToDate then
             let env ← importConfigFileCore olean cfg.leanOpts

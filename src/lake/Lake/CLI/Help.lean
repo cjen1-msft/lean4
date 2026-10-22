@@ -768,14 +768,17 @@ via `--platform` and `--toolchain` (if needed). Similarly, the source revision
 the outputs correspond to must be manually specified via `--rev`."
 
 def helpCacheClean :=
-"Removes ALL files from the local Lake cache
+"Removes build artifacts from the local Lake cache
 
 USAGE:
   lake cache clean
 
-Deletes the configured Lake cache directory. If a workspace configuration
-exists, this will delete the cache directory it uses. Otherwise, it will
-delete the default Lake cache directory for the system."
+Deletes cached build artifacts and mappings. Shared dependency sources are
+retained, since other workspaces may still refer to them. If there are no
+shared sources, the cache directory itself is removed.
+
+If a workspace configuration exists, cleans the cache it uses. Otherwise,
+cleans the default Lake cache directory for the system."
 
 def helpCacheServices :=
 "Print configured remote cache services

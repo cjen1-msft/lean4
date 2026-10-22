@@ -12,6 +12,7 @@ public import Lake.Config.Package
 import Lake.Util.Git
 import Lake.Util.IO
 import Lake.Reservoir
+import Init.Data.Random
 
 set_option doc.verso true
 
@@ -36,6 +37,7 @@ If no local repository exists, initialize a new one.
 -/
 def materializeGitRepo
   (name : String) (repo : GitRepo) (url : String) (rev? : Option GitRev)
+  (filter := true)
 : LoggerIO Unit := do
   let rev := rev?.getD Git.upstreamBranch
   let remote := Git.defaultRemote
@@ -73,7 +75,7 @@ def materializeGitRepo
     repo.addRemote remote url
   -- # New revision
   logInfo s!"{name}: fetching revision '{rev}' from {url}"
-  let some rev ← repo.fetchRevision? remote rev
+  let some rev ← repo.fetchRevision? remote rev filter
     | error s!"{name}: failed to fetch the package revision\
       \n  {rev}\
       \nfrom the Git repository at\
@@ -94,6 +96,8 @@ where
     else
       return url
   @[inline] checkout rev := do
+    if (← repo.getHeadRevision?).isSome && (← repo.hasDiff) then
+      error s!"{name}: refusing to change revisions in a repository with local changes:\n  {repo.dir}"
     logInfo s!"{name}: checking out revision '{rev}'"
     repo.checkoutDetach rev
     -- Remove untracked files from tracked folders in the package.
@@ -105,6 +109,150 @@ where
   @[inline] checkDiff := do
     if (← repo.hasDiff) then
       logWarning s!"{name}: repository has local changes:\n  {repo.dir}"
+
+private structure SharedSource where
+  version : Nat := 1
+  url : String
+  rev : GitRev
+  deriving FromJson, ToJson
+
+private def readSharedSource? (entry : FilePath) : IO (Option SharedSource) := do
+  let file := entry / "lake-package.json"
+  let contents ← try IO.FS.readFile file catch
+    | .noFileOrDirectory .. => return none
+    | e => throw e
+  match Json.parse contents >>= fromJson? with
+  | .ok source =>
+    unless source.version == 1 do
+      throw <| IO.userError s!"{file}: unsupported shared package version"
+    return some source
+  | .error e => throw <| IO.userError s!"{file}: invalid shared package metadata: {e}"
+
+/-- Find the shared repository containing a package, including repository subdirectories. -/
+private partial def sharedSourceRoot? (dir : FilePath) : IO (Option FilePath) := do
+  let some parent := dir.parent | return none
+  if dir.fileName == some "source" then
+    if (← readSharedSource? parent).isSome then
+      return some dir
+  if parent == dir then return none
+  sharedSourceRoot? parent
+
+private def sharedLink? (path : FilePath) : IO (Option FilePath) := do
+  let metadata ← try path.symlinkMetadata catch
+    | .noFileOrDirectory .. => return none
+    | e => throw e
+  unless metadata.type == .symlink do return none
+  sharedSourceRoot? (← IO.FS.realPath path)
+
+private def setSourceWritable (path : FilePath) (writable : Bool) : LogIO Unit :=
+  -- Recursive chmod preserves executable bits and does not follow interior symlinks.
+  proc {cmd := "chmod", args := #["-R", if writable then "u+w" else "a-w", path.toString]}
+    (quiet := true)
+
+private def linkSharedSource (source link : FilePath) : LogIO Unit := do
+  createParentDirs link
+  proc {cmd := "ln", args := #["-s", source.toString, link.toString]} (quiet := true)
+
+private def replaceSharedLink (source link : FilePath) : LogIO Unit := do
+  let temp := link.addExtension s!"lake-link-{← IO.rand 0 0xffffffff}"
+  linkSharedSource source temp
+  try
+    IO.FS.rename temp link
+  finally
+    removeFileIfExists temp
+
+private def detachSharedSource (name : String) (repo : GitRepo) (source : FilePath) : LogIO Unit := do
+  logInfo s!"{name}: detaching shared dependency for private use"
+  let temp := repo.dir.addExtension s!"lake-private-{← IO.rand 0 0xffffffff}"
+  IO.FS.createDir temp
+  let privateRepo := GitRepo.mk temp
+  try
+    privateRepo.clone source.toString
+    let url ← (GitRepo.mk source).getRemoteUrl?
+    if let some url := url then
+      privateRepo.setRemoteUrl Git.defaultRemote url
+    IO.FS.removeFile repo.dir
+    let renamed ← IO.FS.rename temp repo.dir |>.toBaseIO
+    if let .error e := renamed then
+      linkSharedSource source repo.dir
+      error s!"{name}: failed to detach shared dependency: {e}"
+  finally
+    removeDirAllIfExists temp
+
+/--
+Materialize a Git dependency without modifying a published shared repository.
+Existing private repositories stay private, including repositories with local edits.
+-/
+private def materializeDependencyGit
+  (name : String) (repo : GitRepo) (env : Env) (url : String) (rev? : Option GitRev)
+: LoggerIO Unit := do
+  let shared? ← sharedLink? repo.dir
+  let cache? := if env.sharedPackages && !env.privatePackages.contains name then env.lakeCache? else none
+  -- There is no native directory-link primitive on Windows yet.
+  if System.Platform.isWindows || cache?.isNone then
+    if let some source := shared? then detachSharedSource name repo source
+    materializeGitRepo name repo url rev?
+    return
+  if shared?.isNone && (← repo.dir.pathExists) then
+    materializeGitRepo name repo url rev?
+    return
+  let some cache := cache? | unreachable!
+  let url ← if (← FilePath.pathExists url) then
+    (·.toString) <$> IO.FS.realPath url
+  else
+    pure url
+  let repository := cache.packagesDir / (Hash.ofString url).toString
+  IO.FS.createDirAll repository
+  let repository ← IO.FS.realPath repository
+  let lockFile := repository / "lock"
+  discard <| IO.FS.Handle.mk lockFile .append
+  let lock ← IO.FS.Handle.mk lockFile .readWrite
+  lock.lock
+  try
+    let source ← prepare repository url
+    if let some current := shared? then
+      if current == source then return
+    logVerbose s!"{name}: using read-only shared sources at {source}; \
+      set LAKE_PRIVATE_PACKAGES={name} for a private checkout"
+    replaceSharedLink source repo.dir
+  finally
+    lock.unlock
+where
+  validate entry url rev := do
+    let some source ← readSharedSource? entry
+      | error s!"{entry}: incomplete shared package; refusing to use it"
+    unless source.url == url && source.rev == rev do
+      error s!"{entry}: shared package identity mismatch"
+    let path := entry / "source"
+    unless (← (GitRepo.mk path).getHeadRevision?) == some rev do
+      error s!"{entry}: shared package revision mismatch"
+    return path
+  prepare repository url : LoggerIO FilePath := do
+    if let some rev := rev? then
+      if rev.isFullSha1 then
+        let entry := repository / rev
+        if (← entry.pathExists) then return ← validate entry url rev
+    let staging := repository / "prepare"
+    if (← staging.pathExists) then
+      setSourceWritable staging true
+      removeDirAllIfExists staging
+    try
+      let repo := GitRepo.mk (staging / "source")
+      materializeGitRepo name repo url rev? (filter := false)
+      let rev ← repo.getHeadRevision
+      unless rev.isFullSha1 do
+        error s!"{name}: expected a resolved Git commit, got '{rev}'"
+      let entry := repository / rev
+      if (← entry.pathExists) then return ← validate entry url rev
+      IO.FS.writeFile (staging / "lake-package.json") <|
+        toJson ({url, rev} : SharedSource) |>.compress
+      setSourceWritable staging false
+      IO.FS.rename staging entry
+      return entry / "source"
+    finally
+      if (← staging.pathExists) then
+        setSourceWritable staging true
+        removeDirAllIfExists staging
 
 public structure MaterializedDep where
   /-- Absolute path to the materialized package. -/
@@ -120,9 +268,22 @@ public structure MaterializedDep where
   manifest? : Except IO.Error Manifest
   /-- The manifest entry for the dependency. -/
   manifestEntry : PackageEntry
+  /-- Whether the package's sources belong to an immutable shared repository. -/
+  shared : Bool := false
   deriving Inhabited
 
 namespace MaterializedDep
+
+/-- **For internal use only.** Whether relative path dependencies escape the shared repository. -/
+public def hasExternalPathDeps (self : MaterializedDep) (deps : Array Dependency) : IO Bool := do
+  unless self.shared do return false
+  let root? ← sharedSourceRoot? self.pkgDir
+  for dep in deps do
+    if let some (.path dir _) := dep.src? then
+      unless dir.isAbsolute do
+        let some path ← resolvePath? (self.pkgDir / dir) | return true
+        unless (← sharedSourceRoot? path) == root? do return true
+  return false
 
 @[inline] public def name (self : MaterializedDep) : Name :=
   self.manifestEntry.name
@@ -157,6 +318,17 @@ public def fixedToolchain (self : MaterializedDep) : Bool :=
   match self.manifest? with
   | .ok manifest => manifest.fixedToolchain
   | _ => false
+
+/-- **For internal use only.** Detach a materialized Git dependency without changing its pin. -/
+public def detach (self : MaterializedDep) (wsDir relPkgsDir : FilePath) : LogIO MaterializedDep := do
+  let repo := GitRepo.mk (wsDir / relPkgsDir / self.manifestEntry.dirName)
+  let some source ← sharedLink? repo.dir
+    | error s!"{self.prettyName}: shared source link not found: {repo.dir}"
+  detachSharedSource self.prettyName repo source
+  let path := wsDir / self.relPkgDir
+  let some pkgDir ← resolvePath? path
+    | error s!"{self.prettyName}: detached package directory not found: {path}"
+  return {self with pkgDir, shared := false}
 
 end MaterializedDep
 
@@ -247,7 +419,7 @@ where
     let gitDir := wsDir / relPkgDir
     let repo := GitRepo.mk gitDir
     let gitUrl := lakeEnv.pkgUrlMap.find? dep.name |>.getD gitUrl
-    materializeGitRepo name repo gitUrl inputRev?
+    materializeDependencyGit dep.prettyName repo lakeEnv gitUrl inputRev?
     let rev ← repo.getHeadRevision
     let relPkgDir := if let some subDir := subDir? then relPkgDir / subDir else relPkgDir
     mkDep name relPkgDir remoteUrl <| .git gitUrl rev inputRev? subDir?
@@ -259,6 +431,7 @@ where
       pkgDir, relPkgDir, remoteUrl,
       manifest? :=  ← Manifest.load (pkgDir / defaultManifestFile) |>.toBaseIO
       manifestEntry := {name := dep.name, scope := dep.scope, inherited, src}
+      shared := (← sharedSourceRoot? pkgDir).isSome
     }
 
 /--
@@ -276,7 +449,7 @@ public def PackageEntry.materialize
     let relGitDir := relPkgsDir / manifestEntry.dirName
     let repo := GitRepo.mk (wsDir / relGitDir)
     let url := lakeEnv.pkgUrlMap.getD manifestEntry.name url
-    materializeGitRepo manifestEntry.prettyName repo url rev
+    materializeDependencyGit manifestEntry.prettyName repo lakeEnv url rev
     let relPkgDir := match subDir? with | .some subDir => relGitDir / subDir | .none => relGitDir
     mkDep relPkgDir (Git.filterUrl? url |>.getD "")
 where
@@ -289,4 +462,7 @@ where
         Manifest.load (pkgDir / manifestFile) |>.toBaseIO
       else
         return .error (.noFileOrDirectory "" 0 "")
-    return {pkgDir, relPkgDir, remoteUrl, manifest?, manifestEntry}
+    return {
+      pkgDir, relPkgDir, remoteUrl, manifest?, manifestEntry
+      shared := (← sharedSourceRoot? pkgDir).isSome
+    }

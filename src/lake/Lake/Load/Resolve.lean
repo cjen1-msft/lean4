@@ -45,6 +45,11 @@ namespace Lake
   lakeOpts; leanOpts; reconfigure
   scope := dep.scope
   remoteUrl := dep.remoteUrl
+  privateStateDir? :=
+    if dep.shared then
+      some (ws.lakeDir / "dependency-builds" / dep.manifestEntry.dirName)
+    else
+      none
 
 def Workspace.addFacetDecls (decls : Array FacetDecl) (self : Workspace) : Workspace :=
   decls.foldl (·.addFacetConfig ·.config) self
@@ -66,9 +71,23 @@ def Workspace.addDepPackage'
   (lakeOpts : NameMap String) (leanOpts : Options) (reconfigure : Bool)
 : LogIO {ws' : Workspace // ws'.packages.size = ws.packages.size + 1} := do
   let wsIdx := ws.packages.size
-  let loadCfg := mkDepLoadConfig ws dep lakeOpts leanOpts reconfigure
-  let ⟨loadCfg, h⟩ ← resolveConfigFile dep.prettyName loadCfg
-  let fileCfg ← loadConfigFile loadCfg h
+  let load dep := do
+    let loadCfg := mkDepLoadConfig ws dep lakeOpts leanOpts reconfigure
+    let ⟨loadCfg, h⟩ ← resolveConfigFile dep.prettyName loadCfg
+    let fileCfg ← loadConfigFile loadCfg h
+    return (loadCfg, fileCfg)
+  let (loadCfg, fileCfg) ← load dep
+  let (loadCfg, fileCfg) ←
+    if (← dep.hasExternalPathDeps fileCfg.depConfigs) then
+      match dep.manifestEntry.src with
+      | .git .. => do
+        logVerbose s!"{dep.prettyName}: using private sources for relative path dependencies"
+        let dep ← dep.detach ws.dir ws.relPkgsDir
+        load dep
+      | _ => error s!"{dep.prettyName}: relative path dependency escapes a shared repository; \
+          set LAKE_SHARED_PACKAGES=false to detach the containing Git dependency"
+    else
+      pure (loadCfg, fileCfg)
   let pkg := mkPackage loadCfg fileCfg wsIdx
   let ws := ws.addPackage' pkg wsIdx_mkPackage depIdxs_mkPackage |>.addFacetDecls fileCfg.facetDecls
   return ⟨ws, by simp [ws, packages_addFacetDecls, packages_addPackage']⟩

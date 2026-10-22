@@ -29,6 +29,7 @@ A Lake configuration file defines the package's basic configuration. It also typ
   + [Lean `require`](#lean-require)
   + [Supported Sources](#supported-sources)
   + [TOML `require`](#toml-require)
+* [Shared Dependency Packages](#shared-dependency-packages)
 * [GitHub Release Builds](#github-release-builds)
 * [Writing and Running Scripts](#writing-and-running-scripts)
 * [Building and Running Lake from the Source](#building-and-running-lake-from-the-source)
@@ -511,6 +512,45 @@ git = "<url>"
 rev = "<rev>"
 subDir = "<subDir>"
 ```
+
+## Shared Dependency Packages
+
+On Unix, new Git dependencies with the same repository and resolved commit share a read-only
+checkout in Lake's cache, linked from `.lake/packages/<name>`. Repository subdirectory
+dependencies share the containing checkout. Existing private checkouts and local/path
+dependencies remain private. Windows currently retains private Git checkouts.
+
+Choose the cache and sharing policy per environment:
+
+| Variable | Behavior |
+| --- | --- |
+| `LAKE_CACHE_DIR` | Select the cache for shared sources and build artifacts. An empty value disables the system cache and source sharing. If unset, use Lake's normal toolchain or user cache. |
+| `LAKE_SHARED_PACKAGES` | `false` disables source sharing; otherwise sharing is enabled by default where supported. |
+| `LAKE_PRIVATE_PACKAGES` | A comma-separated list of dependency names to keep private and editable. |
+
+For example, `LAKE_CACHE_DIR=/cache/team-a lake build` selects an independent cache.
+`LAKE_PRIVATE_PACKAGES=mathlib lake build` detaches an existing shared mathlib checkout
+into a private checkout. Disabling sharing also detaches existing shared dependencies.
+Later invocations preserve private checkouts and their edits.
+
+Shared packages keep writable state under the workspace's `.lake/dependency-builds/<name>`.
+Compiled configurations remain in `.lake/config`; root-package build paths are unchanged.
+Package code must use `Package.buildDir` and `Package.lakeDir` for writable state.
+Custom targets, hooks, or external cache tools that write into source directories need a
+private override. Git dependencies with relative path dependencies outside their repository
+detach automatically; for nested path packages, disable sharing for the containing Git dependency.
+
+Shared packages enable native artifact caching and restoration unless explicitly configured
+otherwise. Compatible outputs use hard links, or copies when hard links are unavailable.
+Traces and hashes remain private. Missing or incompatible outputs build privately;
+`--no-build` reports that rebuilding is needed. Custom targets share artifacts only when
+they use Lake's artifact-caching helpers.
+
+Updates select another source entry without changing other workspaces' checkouts.
+`lake clean` removes private build outputs. `lake cache clean` removes artifacts and mappings
+but retains shared sources and locks: inactive workspaces can still refer to them.
+Shared sources are not automatically evicted: detach or remove all referring workspaces
+before manually removing a source entry.
 
 ## GitHub Release Builds
 
