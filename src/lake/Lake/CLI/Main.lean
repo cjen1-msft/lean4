@@ -90,6 +90,8 @@ public structure LakeOptions where
   solutionFromExport? : Option FilePath := none
   /-- Whether `lake check` and `lake comparator` run every bundled checker (via `--paranoid`). -/
   paranoid : Bool := false
+  /-- Whether `lake check` checks only the root package's own modules (via `--trust-deps`). -/
+  checkTrustDeps : Bool := false
   /-- Whether `lake check` and `lake comparator` should disable their sandbox (very insecure) -/
   inadvisablyNoSandbox : Bool := false
   builtinLint : BuiltinLint.Args := {}
@@ -442,6 +444,7 @@ def lakeLongOption : (opt : String) → CliM PUnit
   let file ← takeOptArg "--solution-from-export" "path"
   modifyThe LakeOptions ({· with solutionFromExport? := some file})
 | "--paranoid" => modifyThe LakeOptions ({· with paranoid := true})
+| "--trust-deps" => modifyThe LakeOptions ({· with checkTrustDeps := true})
 | "--inadvisably-no-sandbox" => modifyThe LakeOptions ({· with inadvisablyNoSandbox := true})
 | opt             =>  throw <| CliError.unknownLongOption opt
 
@@ -1240,20 +1243,40 @@ protected def checkExport : CliM PUnit := do
   let env ← Lean.importModules (mods.map fun mod => {module := mod.name}) {}
   LeanExport.dumpEnv env
 
+/--
+The half of `lake check --trust-deps` that runs inside the sandbox, in place of `checkExport`.
+
+Builds the default targets like `checkExport`, but instead of exporting them, checks the root
+package's modules in scope with `Check.checkRootModules` and exits with its verdict.
+-/
+protected def checkTrustingDeps : CliM PUnit := do
+  let opts ← getThe LakeOptions
+  let ws ← loadWorkspace (← mkLoadConfig opts)
+  let buildConfig := mkBuildConfig opts
+  ws.runBuild (buildSpecs (← parseTargetSpecs ws [])) buildConfig
+  let mods ← ws.runBuild ws.root.defaultModules.fetch buildConfig
+  Lean.initSearchPath ws.lakeEnv.lean.sysroot ws.augmentedLeanPath
+  -- `collectAxioms` reads the axioms each `.olean` records from an environment extension, which only
+  -- `loadExts` fills in. This runs the imported modules' initializers in this process.
+  unsafe Lean.enableInitializersExecution
+  let env ← Lean.importModules (mods.map fun mod => {module := mod.name}) {} (loadExts := true)
+  let modules := env.header.moduleNames.filter ws.root.isBuildableModule
+  exit <| ← Check.checkRootModules env modules ws.lakeEnv.lean ws.augmentedEnvVars
+
 /-- The `lake check` command: check this project against the kernel. -/
 protected def check : CliM PUnit := do
   processOptions lakeOption
   let opts ← getThe LakeOptions
   if (← IO.getEnv "LAKE_CHECK_EXPORT").isSome then
-    lake.checkExport
+    if opts.checkTrustDeps then lake.checkTrustingDeps else lake.checkExport
   else
     noArgsRem do
     let (leanInstall, lakeInstall) ← opts.getInstall
     -- The workspace is deliberately not loaded here: evaluating the project's configuration is code
     -- execution, and containing it is what the sandbox is for.
     let cfg ← mkLoadConfig opts
-    exit <| ← Check.runCheck opts.checkFromExport? opts.paranoid opts.inadvisablyNoSandbox
-      leanInstall lakeInstall cfg.wsDir
+    exit <| ← Check.runCheck opts.checkFromExport? opts.paranoid opts.checkTrustDeps
+      opts.inadvisablyNoSandbox leanInstall lakeInstall cfg.wsDir
 
 protected def script : CliM PUnit := do
   if let some cmd ← takeArg? then

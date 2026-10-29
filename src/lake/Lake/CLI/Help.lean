@@ -516,7 +516,8 @@ def helpCheck :=
 "Check this project against external checker(s)
 
 USAGE:
-  lake check [--from-export <FILE>] [--paranoid] [--inadvisably-no-sandbox]
+  lake check [--from-export <FILE>] [--paranoid] [--trust-deps]
+             [--inadvisably-no-sandbox]
 
 Builds the default build targets, exports them, and replays the result through
 the kernel, erroring on any use of non-standard axioms.
@@ -536,6 +537,11 @@ OPTIONS:
   --paranoid                 also run all external checkers bundled with Lean
                              besides Lean's own kernel: `leanchecker-paranoid`,
                              `lean4lean`, `nanoda`, `con-leche` and `con-ron`
+  --trust-deps               trust the `.olean`s of all dependencies (including
+                             Lean core) and check only the root package's
+                             modules on top of them. Much faster, but trusts
+                             the sandboxed build's output. Cannot be combined
+                             with `--from-export` or `--paranoid`
   --inadvisably-no-sandbox   disable the built-in sandbox. This can compromise
                              the result fully and is only advised for expert
                              users.
@@ -558,7 +564,8 @@ EXIT CODES:
   1                     a checker rejects it, an axiom is not permitted, or a
                         build did not succeed
   2                     could not start: `bwrap` is missing, the project has
-                        no `lake-manifest.json`, or it has no default targets
+                        no `lake-manifest.json`, it has no default targets, or
+                        the options cannot be combined
 
 ENVIRONMENT:
   COMPARATOR_BWRAP      sandbox executable (default: `bwrap` on PATH)
