@@ -1092,6 +1092,7 @@ def Module.recBuildLtar (self : Module) : FetchM (Job FilePath) := do
         error "archive does not exist and needs to be built"
       else
         updateAction .build
+        detachCachedPackageOf self.ltarFile
         self.packLtar arts
     newTrace s!"{self.name.toString}:ltar"
     addTrace art.trace
@@ -1194,6 +1195,14 @@ where
     have : GetMTime Module := ⟨(·.getMTime presetup.isModule presetup.postponeCompile)⟩
     have : CheckExists Module := ⟨(·.checkExists presetup.isModule presetup.postponeCompile)⟩
     let savedTrace ← readTraceFile mod.traceFile
+    -- A package linked from the global package cache is read-only:
+    -- use its up-to-date outputs as-is or make it private to rebuild them.
+    if (← cachedPackageOf? mod.traceFile).isSome then
+      if (← mod.checkArtifactsExist presetup.isModule presetup.postponeCompile) then
+        let status ← savedTrace.replayIfUpToDate' (oldTrace := presetup.srcMTime) mod depTrace
+        if status.isUpToDate then
+          return ← mod.computeArtifacts presetup.isModule presetup.postponeCompile
+      detachCachedPackageOf mod.oleanFile
     if (← mod.pkg.isArtifactCacheWritable) then
       let restore ← mod.pkg.restoreAllArtifacts
       match (← fetchFromCache? presetup savedTrace restore) with

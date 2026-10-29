@@ -26,6 +26,8 @@ import Lake.Util.Cli
 import Lake.CLI.Init
 import Lake.CLI.Help
 import Lake.CLI.Build
+import Lake.CLI.Share
+import Lake.Config.PackageCache
 import LeanExport.Basic
 import Lake.CLI.Actions
 import Lake.CLI.Translate
@@ -890,7 +892,27 @@ protected def clean : CliM PUnit := do
       return cache.dir
     else
       error "no cache to delete; no workspace configuration found and no system cache detected"
+  -- Entries of the global package cache are read-only
+  let pkgsDir := Cache.packagesDir ⟨dir⟩
+  if (← pkgsDir.isDir) then
+    setDirWritable pkgsDir true
   removeDirAllIfExists dir
+
+protected def share : CliM PUnit := do
+  processOptions lakeOption
+  let opts ← getThe LakeOptions
+  let pkgSpecs ← takeArgs
+  let ws ← loadWorkspace (← mkLoadConfig opts)
+  let pkgs ← id do
+    if pkgSpecs.isEmpty then
+      return ws.packages.extract 1
+    else
+      pkgSpecs.toArray.mapM fun spec => do
+        let pkg ← parsePackageSpec ws spec
+        if pkg.wsIdx == 0 then
+          error s!"cannot share the root package '{pkg.prettyName}'; only dependencies can be shared"
+        return pkg
+  ws.sharePackages pkgs (mkBuildConfig opts)
 
 protected def help : CliM PUnit := do
   IO.println <| helpCache <| ← takeArgD ""
@@ -904,6 +926,7 @@ def cacheCli : (cmd : String) → CliM PUnit
 | "stage"       => cache.stage
 | "unstage"     => cache.unstage
 | "put-staged"  => cache.putStaged
+| "share"       => cache.share
 | "clean"       => cache.clean
 | "services"    => cache.services
 | "help"        => cache.help
@@ -1184,7 +1207,7 @@ protected def clean : CliM PUnit := do
       match ws.findPackageByName? <| stringToLegalOrSimpleName pkgSpec with
       | none => throw <| .unknownPackage pkgSpec
       | some pkg => pure pkg
-    pkgs.forM (·.clean)
+    pkgs.forM fun pkg => ws.cleanPackage pkg
 
 /-- The `lake shake` command: minimize imports in Lean source files. -/
 protected def shake : CliM PUnit := do

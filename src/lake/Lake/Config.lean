@@ -36,6 +36,7 @@ public import Lake.Config.Monad
 public import Lake.Config.Opaque
 public import Lake.Config.OutFormat
 public import Lake.Config.Package
+public import Lake.Config.PackageCache
 public import Lake.Config.Pattern
 public import Lake.Config.Script
 public import Lake.Config.TargetConfig

@@ -9,6 +9,7 @@ prelude
 public import Lake.Config.Env
 public import Lake.Load.Manifest
 public import Lake.Config.Package
+import Lake.Config.PackageCache
 import Lake.Util.Git
 import Lake.Util.IO
 import Lake.Reservoir
@@ -105,6 +106,31 @@ where
   @[inline] checkDiff := do
     if (← repo.hasDiff) then
       logWarning s!"{name}: repository has local changes:\n  {repo.dir}"
+
+/-- Resolves a Git URL that is a local path to its real path (as {name}`materializeGitRepo` does). -/
+public def resolveGitUrl (url : String) : BaseIO String := do
+  if (← FilePath.pathExists url) then
+    if let some path ← resolvePath? url then
+      return path.toString
+  return url
+
+/--
+Returns whether {lean}`repo` is linked from the global package cache at revision {lean}`rev` of
+{lean}`url` and so can be used as-is. If it is linked from the cache, but at a different revision
+or remote, the link is removed (leaving the cache entry untouched) so that the package is
+materialized as a normal private checkout. Lake never runs mutating Git operations in a cache entry.
+-/
+def useCachedRepo
+  (name : String) (lakeEnv : Env) (repo : GitRepo) (url : String) (rev : GitRev)
+: LoggerIO Bool := do
+  unless (← lakeEnv.isCachedDir repo.dir) do
+    return false
+  if (← repo.getHeadRevision?) == some rev then
+    if (← repo.getRemoteUrl? Git.defaultRemote) == some (← resolveGitUrl url) then
+      return true
+  logInfo s!"{name}: unlinking package from the global package cache"
+  IO.FS.removeFile repo.dir
+  return false
 
 public structure MaterializedDep where
   /-- Absolute path to the materialized package. -/
@@ -247,6 +273,10 @@ where
     let gitDir := wsDir / relPkgDir
     let repo := GitRepo.mk gitDir
     let gitUrl := lakeEnv.pkgUrlMap.find? dep.name |>.getD gitUrl
+    -- Updating a package linked from the global package cache makes it private.
+    if (← lakeEnv.isCachedDir gitDir) then
+      logInfo s!"{name}: unlinking package from the global package cache"
+      IO.FS.removeFile gitDir
     materializeGitRepo name repo gitUrl inputRev?
     let rev ← repo.getHeadRevision
     let relPkgDir := if let some subDir := subDir? then relPkgDir / subDir else relPkgDir
@@ -276,14 +306,19 @@ public def PackageEntry.materialize
     let relGitDir := relPkgsDir / manifestEntry.dirName
     let repo := GitRepo.mk (wsDir / relGitDir)
     let url := lakeEnv.pkgUrlMap.getD manifestEntry.name url
-    materializeGitRepo manifestEntry.prettyName repo url rev
+    let cached ← useCachedRepo manifestEntry.prettyName lakeEnv repo url rev
+    unless cached do
+      materializeGitRepo manifestEntry.prettyName repo url rev
     let relPkgDir := match subDir? with | .some subDir => relGitDir / subDir | .none => relGitDir
-    mkDep relPkgDir (Git.filterUrl? url |>.getD "")
+    mkDep relPkgDir (Git.filterUrl? url |>.getD "") cached
 where
-  @[inline] mkDep relPkgDir remoteUrl : LoggerIO MaterializedDep := do
+  @[inline] mkDep relPkgDir remoteUrl (cached := false) : LoggerIO MaterializedDep := do
     let pkgDir := wsDir / relPkgDir
-    let some pkgDir ← resolvePath? pkgDir
+    let some realPkgDir ← resolvePath? pkgDir
       | error s!"{manifestEntry.prettyName}: package directory not found: {pkgDir}"
+    -- Paths in a package linked from the global package cache go through the link,
+    -- so that Lake can recognize them (and detach the package if it needs to write to it).
+    let pkgDir := if cached then pkgDir else realPkgDir
     let manifest? ← id do
       if let some manifestFile := manifestEntry.manifestFile? then
         Manifest.load (pkgDir / manifestFile) |>.toBaseIO

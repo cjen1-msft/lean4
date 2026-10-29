@@ -112,7 +112,7 @@ def resolveTargetInPackage
   else
     throw <| CliError.missingTarget pkg.baseName (target.toString false)
 
-def resolveDefaultPackageTarget
+public def resolveDefaultPackageTarget
   (ws : Workspace) (pkg : Package)
 : Except CliError (Array BuildSpec) :=
   pkg.defaultTargets.flatMapM (resolveTargetInPackage ws pkg · .anonymous)

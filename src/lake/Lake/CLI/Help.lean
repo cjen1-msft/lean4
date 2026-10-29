@@ -219,7 +219,9 @@ the latest version compatible with the package's configuration (or removed if
 removed from the configuration). If there are dependencies on multiple versions
 of the same package, the version materialized is undefined.
 
-A bare `lake update` will upgrade all dependencies."
+A bare `lake update` will upgrade all dependencies. An updated package that is
+linked from the global package cache (see `lake cache share`) is unlinked and
+materialized as a private checkout; the cache entry is left untouched."
 
 def helpTest :=
 "Test the workspace's root package using its configured test driver
@@ -363,7 +365,9 @@ USAGE:
   lake clean [<package>...]
 
 If no package is specified, deletes the build directories of every package in
-the workspace. Otherwise, just deletes those of the specified packages."
+the workspace. Otherwise, just deletes those of the specified packages.
+A package linked from the global package cache (see `lake cache share`) is
+unlinked instead; the cache entry is left untouched."
 
 def helpShake :=
 "Minimize imports in Lean source files
@@ -584,6 +588,7 @@ COMMANDS:
   get [<mappings>]      download build outputs into the local Lake cache
   put <mappings>        upload build outputs to a remote cache
   add <mappings>        add input-to-output mappings to the Lake cache
+  share [<package>...]  share built dependencies via the global package cache
   clean                 removes ALL from the local Lake cache
   services              print configured remote cache services
 
@@ -775,7 +780,38 @@ USAGE:
 
 Deletes the configured Lake cache directory. If a workspace configuration
 exists, this will delete the cache directory it uses. Otherwise, it will
-delete the default Lake cache directory for the system."
+delete the default Lake cache directory for the system. This includes the
+packages shared via `lake cache share`."
+
+def helpCacheShare :=
+"Share built dependency packages through the global package cache
+
+USAGE:
+  lake cache share [<package>...]
+
+Opt-in sharing of whole built dependency packages between workspaces.
+For each specified dependency (or every dependency, if none is specified)
+and its dependencies, Lake stores the package directory (sources and build
+outputs) once, read-only, in the `packages` directory of the Lake cache and
+replaces the workspace's `.lake/packages/<name>` with a symbolic link to it.
+
+If no matching cache entry exists, Lake first builds the package's default
+targets in the workspace and then publishes the result. Build outputs that
+are already present (e.g., downloaded by `lake exe cache get`) are reused.
+Another workspace with the same dependency then just links to the entry.
+
+An entry is identified by the package's name, Git URL and revision, the
+Lean toolchain, the platform, the package's `require ... with` options, and
+the entries of its dependencies. Only clean Git checkouts at their manifest
+revision whose dependencies can also be shared are shared. Path dependencies,
+modified checkouts, and the root package are kept private.
+
+Lake never writes into a cache entry. `lake clean` and `lake update` unlink
+(rather than delete or modify) a linked package. If a build needs outputs of
+a linked package that are missing or out-of-date, Lake warns that caching is
+not supported for built outputs, makes the package private (by copying the
+entry), and rebuilds it there. Entries are not deleted automatically; use
+`lake cache clean` to delete the whole cache. Not supported on Windows."
 
 def helpCacheServices :=
 "Print configured remote cache services
@@ -966,6 +1002,7 @@ public def helpCache : (cmd : String) → String
 | "stage"               => helpCacheStage
 | "unstage"             => helpCacheUnstage
 | "put-staged"          => helpCachePutStaged
+| "share"               => helpCacheShare
 | "clean"               => helpCacheClean
 | "services"            => helpCacheServices
 | _                     => helpCacheCli
