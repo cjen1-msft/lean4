@@ -1,0 +1,16 @@
+name = "checktest"
+version = "0.1.0"
+defaultTargets = ["Good"]
+
+[[require]]
+name = "dep"
+path = "dep"
+
+[[lean_lib]]
+name = "Good"
+
+[[lean_lib]]
+name = "Hacked"
+
+[[lean_lib]]
+name = "Cheat"

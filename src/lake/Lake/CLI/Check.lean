@@ -30,6 +30,11 @@ a whitelist. This backs `lake comparator` and `lake check`.
 The code being judged is adversarial input: it is built and exported inside a `bwrap` sandbox,
 and no `.olean` produced from it is ever mapped into the process that reports the verdict. Only the
 resulting NDJSON export crosses the boundary.
+
+`lake check --trust-deps` trades some of that for speed. It trusts every module outside the root
+package (Lean itself, Mathlib, and any other dependency) and has `leanchecker` replay only the root
+package's own modules, each on top of its imports as loaded from their `.olean`s. That `leanchecker`
+still runs in the sandbox, but it maps the project's `.olean`s, and its exit code is the verdict.
 -/
 
 namespace Lake.Check
@@ -663,8 +668,7 @@ def standardAxioms : Array Lean.Name :=
   #[``propext, ``Classical.choice, ``Quot.sound]
 
 /-- Reports the axioms the checked modules rest on, and rejects any beyond `standardAxioms`. -/
-def checkUsedAxioms (exported : LeanExport.ExportedEnv) : M Unit := do
-  let used := usedAxioms exported
+def checkUsedAxioms (used : Array (Lean.Name × Lean.Name)) : M Unit := do
   if used.isEmpty then
     IO.println "Uses no axioms"
   else
@@ -680,8 +684,77 @@ def checkProject : M Unit := do
     safeResolveDeps
   withSafeCheckExport fun exportPath => do
     let exported ← LeanExport.parseStream <| .ofHandle (← IO.FS.Handle.mk exportPath .read)
-    checkUsedAxioms exported
+    checkUsedAxioms (usedAxioms exported)
     runKernels exportPath
+
+/-- What the sandboxed half of `lake check --trust-deps` reports in place of an export. -/
+public structure TrustedReport where
+  /-- The root package's modules among those in scope: the ones the kernel checks. -/
+  modules : Array Lean.Name
+  /-- The axioms `modules` rest on, as `usedAxiomsOf` reports them. -/
+  axioms : Array (Lean.Name × Lean.Name)
+  deriving Lean.ToJson, Lean.FromJson
+
+/--
+Builds the project in one sandboxed `lake` process, which reports the root package's modules in
+scope and the axioms they rest on rather than exporting anything.
+-/
+def safeCheckReport : M TrustedReport := do
+  IO.println "Building and collecting the root package's modules"
+  let projectDir ← getProjectDir
+  let out ← runSandBoxedWithStdout {
+    cmd := (← read).whichLake.toString,
+    args := #["check", "--trust-deps"],
+    envPass := #["PATH", "HOME", "LEAN_ABORT_ON_PANIC"]
+    envOverride := #[("LEAN_ABORT_ON_PANIC", some "1"), ("LAKE_CHECK_EXPORT", some "1")]
+    readablePaths := #[projectDir, ← getLeanPrefix, ← getLakeHome]
+    writablePaths := #[projectDir / ".lake"]
+    tmpfsPaths := forbiddenPaths
+  }
+  match Lean.Json.parse out >>= Lean.fromJson? with
+  | .ok report => return report
+  | .error e => throw <| .userError s!"malformed report from the sandboxed build: {e}"
+
+/--
+Runs the bundled `leanchecker` over `modules` in the sandbox. Each module is replayed on top of its
+imports as loaded from their `.olean`s, so only the constants it declares itself reach the kernel.
+-/
+def runTrustingKernel (modules : Array Lean.Name) : M Unit := do
+  if modules.isEmpty then
+    IO.println "The root package has no modules in scope to check"
+    return
+  let noun := if modules.size == 1 then "module" else "modules"
+  IO.println s!"Running Lean default kernel on {modules.size} {noun} of the root package"
+  let projectDir ← getProjectDir
+  let leanPrefix ← getLeanPrefix
+  let ret ← runSandBoxedExitCode {
+    cmd := (← read).whichLeanChecker.toString
+    args := #["--verbose"] ++ modules.map (·.toString (escape := false))
+    envPass := #["LEAN_ABORT_ON_PANIC"]
+    -- `leanchecker` finds the toolchain's own modules through `LEAN_SYSROOT`, and would otherwise
+    -- ask a `lean` on `PATH` for it.
+    envOverride := #[("LEAN_ABORT_ON_PANIC", some "1"), ("LEAN_PATH", some (← read).leanPath),
+      ("LEAN_SYSROOT", some leanPrefix.toString)]
+    readablePaths := #[projectDir, leanPrefix, ← getLakeHome]
+    writablePaths := #[]
+    tmpfsPaths := forbiddenPaths
+  }
+  if ret != 0 then
+    IO.println "Lean default kernel rejected the solution"
+    throw <| .userError s!"Lean default exited with {ret}"
+  IO.println "Lean default kernel accepts the solution"
+
+/--
+Checks the project as `checkProject` does, but trusts everything outside the root package: only the
+root package's own modules are replayed through the kernel, on top of their imports' `.olean`s, and
+only the axioms reachable from those modules are policed.
+-/
+def checkProjectTrustingDeps : M Unit := do
+  let (leanPath, binPath) ← safeResolveWorkspace
+  withReader ({· with leanPath, binPath}) do
+    let report ← safeCheckReport
+    checkUsedAxioms report.axioms
+    runTrustingKernel report.modules
 
 /--
 Runs `lake comparator`: builds and exports the challenge and the solution in a sandbox, then judges
@@ -749,10 +822,20 @@ public def runComparator (configFile? : Option System.FilePath)
 /--
 Runs `lake check`: builds and exports the project's default targets in the sandbox and checks them
 with the kernel, with no challenge to compare them against.
+
+With `trustDeps`, nothing is exported: only the root package's own modules are checked, against
+their imports' `.olean`s (see `checkProjectTrustingDeps`).
 -/
-public def runCheck (fromExport? : Option System.FilePath) (paranoid : Bool)
+public def runCheck (fromExport? : Option System.FilePath) (paranoid : Bool) (trustDeps : Bool)
     (inadvisablyNoSandbox : Bool) (lean : LeanInstall) (lake : LakeInstall)
     (projectDir : System.FilePath) : IO ExitCode := do
+  if trustDeps then
+    if fromExport?.isSome then
+      return ← cannotRun "`--trust-deps` checks the project's own `.olean`s, so it cannot be \
+        combined with `--from-export`"
+    if paranoid then
+      return ← cannotRun "`--trust-deps` cannot be combined with `--paranoid`: the bundled \
+        checkers only read exports, which would check every dependency again"
   let resolved ← resolveModuleStore "check" #[("--from-export", .check, fromExport?)]
   let moduleStore ←
     match resolved with
@@ -767,7 +850,11 @@ public def runCheck (fromExport? : Option System.FilePath) (paranoid : Bool)
       return rc
   try
     -- Checkers that police axioms themselves are held to the axioms `checkUsedAxioms` permits.
-    checkProject.run { base with legalAxioms := standardAxioms }
+    let ctx := { base with legalAxioms := standardAxioms }
+    if trustDeps then
+      checkProjectTrustingDeps.run ctx
+    else
+      checkProject.run ctx
     return 0
   catch e =>
     IO.eprintln s!"error: {e}"
