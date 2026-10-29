@@ -84,6 +84,8 @@ public structure LakeOptions where
   comparatorConfig? : Option FilePath := none
   /-- File received via `lake check --from-export` -/
   checkFromExport? : Option FilePath := none
+  /-- Whether `lake check` exports only what the root package reaches (via `--reachable`). -/
+  checkReachable : Bool := false
   /-- File received via `lake comparator --challenge-from-export` -/
   challengeFromExport? : Option FilePath := none
   /-- File received via `lake comparator --solution-from-export` -/
@@ -435,6 +437,7 @@ def lakeLongOption : (opt : String) → CliM PUnit
 | "--from-export" => do
   let file ← takeOptArg "--from-export" "path"
   modifyThe LakeOptions ({· with checkFromExport? := some file})
+| "--reachable" => modifyThe LakeOptions ({· with checkReachable := true})
 | "--challenge-from-export" => do
   let file ← takeOptArg "--challenge-from-export" "path"
   modifyThe LakeOptions ({· with challengeFromExport? := some file})
@@ -1226,7 +1229,9 @@ protected def comparator : CliM PUnit := do
 /--
 The half of `lake check` that runs inside the sandbox, selected by `LAKE_CHECK_EXPORT`.
 
-Resolves the default targets to modules, builds them, and dumps the export of everything in scope.
+Resolves the default targets to modules, builds them, and dumps the export of everything in scope,
+or, with `--reachable`, of every non-internal constant the root package defines, which brings along
+everything those depend on.
 The export goes to standard out and everything else to standard error, so the outer half can read
 one from the other.
 -/
@@ -1238,7 +1243,13 @@ protected def checkExport : CliM PUnit := do
   let mods ← ws.runBuild ws.root.defaultModules.fetch buildConfig
   Lean.initSearchPath ws.lakeEnv.lean.sysroot ws.augmentedLeanPath
   let env ← Lean.importModules (mods.map fun mod => {module := mod.name}) {}
-  LeanExport.dumpEnv env
+  if opts.checkReachable then
+    let isRootMod := env.header.moduleNames.map ws.root.isBuildableModule
+    let roots := env.constants.toList.filterMap fun (c, _) =>
+      if !c.isInternal && (env.getModuleIdxFor? c).any (isRootMod[·]!) then some c else none
+    LeanExport.dumpEnv env roots
+  else
+    LeanExport.dumpEnv env
 
 /-- The `lake check` command: check this project against the kernel. -/
 protected def check : CliM PUnit := do
@@ -1252,8 +1263,8 @@ protected def check : CliM PUnit := do
     -- The workspace is deliberately not loaded here: evaluating the project's configuration is code
     -- execution, and containing it is what the sandbox is for.
     let cfg ← mkLoadConfig opts
-    exit <| ← Check.runCheck opts.checkFromExport? opts.paranoid opts.inadvisablyNoSandbox
-      leanInstall lakeInstall cfg.wsDir
+    exit <| ← Check.runCheck opts.checkFromExport? opts.checkReachable opts.paranoid
+      opts.inadvisablyNoSandbox leanInstall lakeInstall cfg.wsDir
 
 protected def script : CliM PUnit := do
   if let some cmd ← takeArg? then

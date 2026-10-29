@@ -516,7 +516,8 @@ def helpCheck :=
 "Check this project against external checker(s)
 
 USAGE:
-  lake check [--from-export <FILE>] [--paranoid] [--inadvisably-no-sandbox]
+  lake check [--from-export <FILE>] [--reachable] [--paranoid]
+             [--inadvisably-no-sandbox]
 
 Builds the default build targets, exports them, and replays the result through
 the kernel, erroring on any use of non-standard axioms.
@@ -533,6 +534,11 @@ Building the project once is enough to write one.
 OPTIONS:
   --from-export=<file>       check this export, instead of building and
                              exporting the project (see below)
+  --reachable                export and check only the root package's own
+                             declarations and what they depend on, so unused
+                             declarations of dependencies, such as one using
+                             `sorry`, are not checked. Cannot be combined with
+                             `--from-export`
   --paranoid                 also run all external checkers bundled with Lean
                              besides Lean's own kernel: `leanchecker-paranoid`,
                              `lean4lean`, `nanoda`, `con-leche` and `con-ron`

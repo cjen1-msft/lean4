@@ -1,0 +1,10 @@
+name = "checktest"
+version = "0.1.0"
+defaultTargets = ["Solution"]
+
+[[require]]
+name = "dep"
+path = "dep"
+
+[[lean_lib]]
+name = "Solution"

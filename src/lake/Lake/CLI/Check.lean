@@ -75,6 +75,8 @@ structure Context where
   /-- The checkers `--paranoid` adds, each as a name and a command as for `externalKernels`. -/
   bundledKernels : Array (String × Array String)
   moduleStore : Std.HashMap ModuleKind System.FilePath
+  /-- Whether `lake check` exports only what the root package reaches (via `--reachable`). -/
+  reachable : Bool := false
 
 abbrev M := ReaderT Context IO
 
@@ -344,7 +346,7 @@ def withSafeCheckExport (f : System.FilePath → M α) : M α := do
     IO.FS.withTempFile fun handle path => do
       runSandBoxedWithStdoutTo handle {
         cmd := (← read).whichLake.toString,
-        args := #["check"],
+        args := if (← read).reachable then #["check", "--reachable"] else #["check"],
         envPass := #["PATH", "HOME", "LEAN_ABORT_ON_PANIC"]
         envOverride := #[("LEAN_ABORT_ON_PANIC", some "1"), ("LAKE_CHECK_EXPORT", some "1")]
         readablePaths := #[projectDir, ← getLeanPrefix, ← getLakeHome]
@@ -750,9 +752,12 @@ public def runComparator (configFile? : Option System.FilePath)
 Runs `lake check`: builds and exports the project's default targets in the sandbox and checks them
 with the kernel, with no challenge to compare them against.
 -/
-public def runCheck (fromExport? : Option System.FilePath) (paranoid : Bool)
+public def runCheck (fromExport? : Option System.FilePath) (reachable : Bool) (paranoid : Bool)
     (inadvisablyNoSandbox : Bool) (lean : LeanInstall) (lake : LakeInstall)
     (projectDir : System.FilePath) : IO ExitCode := do
+  if reachable && fromExport?.isSome then
+    return ← cannotRun "`lake check --reachable` builds its own export, so it cannot take one \
+      with `--from-export`"
   let resolved ← resolveModuleStore "check" #[("--from-export", .check, fromExport?)]
   let moduleStore ←
     match resolved with
@@ -767,7 +772,7 @@ public def runCheck (fromExport? : Option System.FilePath) (paranoid : Bool)
       return rc
   try
     -- Checkers that police axioms themselves are held to the axioms `checkUsedAxioms` permits.
-    checkProject.run { base with legalAxioms := standardAxioms }
+    checkProject.run { base with legalAxioms := standardAxioms, reachable }
     return 0
   catch e =>
     IO.eprintln s!"error: {e}"
