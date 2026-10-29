@@ -7,10 +7,8 @@ module
 
 prelude
 public import LeanExport.Parse
-public import Lean.Environment
 import Lake.Check.Util
 import Init.Data.ToString.Macro
-import Init.While
 import Std.Data.HashSet
 
 namespace Lake.Check
@@ -71,45 +69,6 @@ public def usedAxioms (env : LeanExport.ExportedEnv) : Array (Lean.Name × Lean.
             modify fun (seen, used) =>
               if seen.contains ref then (seen, used) else (seen.insert ref, used.push (ref, name))
   (collect.run ({}, #[])).2.2
-
-/--
-The axioms the constants declared in `modules` rest on, each paired with one constant that refers
-to it.
-
-Unlike `usedAxioms`, which looks at every constant in an export, this follows references outward
-from the constants `modules` declare, through whatever modules those live in. An axiom that only
-constants outside that closure refer to is not reported.
--/
-public def usedAxiomsOf (env : Lean.Environment) (modules : Array Lean.Name) :
-    Array (Lean.Name × Lean.Name) := Id.run do
-  let mut worklist := #[]
-  let mut visited : Std.HashSet Lean.Name := {}
-  for mod in modules do
-    let some idx := env.getModuleIdx? mod | continue
-    let some data := env.header.moduleData[idx.toNat]? | continue
-    for name in data.constNames do
-      unless visited.contains name do
-        visited := visited.insert name
-        worklist := worklist.push name
-  -- Separate from `visited`, so an axiom declared in `modules` is still reported once it is used.
-  let mut seenAxioms : Std.HashSet Lean.Name := {}
-  let mut used := #[]
-  repeat
-    let some name := worklist.back? | break
-    worklist := worklist.pop
-    let some info := env.find? name | continue
-    let refs := (runForUsedConsts info fun ref => modify (·.push ref) : StateM _ _).run #[] |>.2
-    for ref in refs do
-      -- `runForUsedConsts` reports the constant itself, which is not an incoming reference
-      if ref == name then continue
-      if let some (.axiomInfo ..) := env.find? ref then
-        unless seenAxioms.contains ref do
-          seenAxioms := seenAxioms.insert ref
-          used := used.push (ref, name)
-      unless visited.contains ref do
-        visited := visited.insert ref
-        worklist := worklist.push ref
-  return used
 
 public def checkAxioms (solution : LeanExport.ExportedEnv) (theoremTargets : Array Lean.Name)
     (definitionTargets : Array Lean.Name) (legalAxioms : Array Lean.Name) : Except String Unit := do

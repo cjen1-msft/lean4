@@ -90,10 +90,7 @@ public structure LakeOptions where
   solutionFromExport? : Option FilePath := none
   /-- Whether `lake check` and `lake comparator` run every bundled checker (via `--paranoid`). -/
   paranoid : Bool := false
-  /--
-  Whether `lake check` trusts everything outside the root package and kernel-checks only the root
-  package's own modules (via `--trust-deps`).
-  -/
+  /-- Whether `lake check` checks only the root package's own modules (via `--trust-deps`). -/
   checkTrustDeps : Bool := false
   /-- Whether `lake check` and `lake comparator` should disable their sandbox (very insecure) -/
   inadvisablyNoSandbox : Bool := false
@@ -1236,8 +1233,7 @@ Resolves the default targets to modules, builds them, and dumps the export of ev
 The export goes to standard out and everything else to standard error, so the outer half can read
 one from the other.
 
-Under `--trust-deps` it reports a `Check.TrustedReport` as JSON instead of the export: the root
-package's modules in scope, and the axioms those rest on.
+Under `--trust-deps` it exports nothing, and checks the root package's modules itself instead.
 -/
 protected def checkExport : CliM PUnit := do
   let opts ← getThe LakeOptions
@@ -1246,13 +1242,14 @@ protected def checkExport : CliM PUnit := do
   ws.runBuild (buildSpecs (← parseTargetSpecs ws [])) buildConfig
   let mods ← ws.runBuild ws.root.defaultModules.fetch buildConfig
   Lean.initSearchPath ws.lakeEnv.lean.sysroot ws.augmentedLeanPath
-  let env ← Lean.importModules (mods.map fun mod => {module := mod.name}) {}
+  let imports := mods.map fun mod => {module := mod.name}
   if opts.checkTrustDeps then
-    let modules := env.header.moduleNames.filter (ws.root.findModule? · |>.isSome)
-    let report : Check.TrustedReport := {modules, axioms := Check.usedAxiomsOf env modules}
-    IO.println (toJson report).compress
-  else
-    LeanExport.dumpEnv env
+    -- `collectAxioms` reads the axioms each `.olean` records from an environment extension.
+    unsafe Lean.enableInitializersExecution
+    let env ← Lean.importModules imports {} (loadExts := true)
+    let modules := env.header.moduleNames.filter ws.root.isBuildableModule
+    exit <| ← Check.checkRootModules env modules ws.lakeEnv.lean ws.augmentedEnvVars
+  LeanExport.dumpEnv (← Lean.importModules imports {})
 
 /-- The `lake check` command: check this project against the kernel. -/
 protected def check : CliM PUnit := do

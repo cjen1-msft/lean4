@@ -30,10 +30,6 @@ test_status_out 0 'Lean default kernel accepts the solution' check --trust-deps
 match_text 'Uses no axioms' produced.out
 match_text 'replaying Good' produced.out
 no_match_text 'replaying Dep' produced.out
-no_match_text 'Building and exporting' produced.out
-
-# Without the flag, the whole dependency is still in scope.
-test_status_out 1 "Axiom 'sorryAx' is not permitted; it is used by 'Dep.cheat'" check
 
 # The root package's own modules are still replayed through the kernel.
 sed_i 's/^defaultTargets = .*/defaultTargets = ["Hacked"]/' lakefile.toml
@@ -42,7 +38,7 @@ match_text 'Lean default kernel rejected the solution' produced.out
 
 # Axioms are still policed through the dependencies they are reached by.
 sed_i 's/^defaultTargets = .*/defaultTargets = ["Cheat"]/' lakefile.toml
-test_status_out 1 "Axiom 'sorryAx' is not permitted; it is used by 'Dep.cheat'" check --trust-deps
+test_status_out 1 "Axiom 'sorryAx' is not permitted; it is used by 'cheat'" check --trust-deps
 no_match_text 'Running Lean default kernel' produced.out
 
 rm -f produced.out

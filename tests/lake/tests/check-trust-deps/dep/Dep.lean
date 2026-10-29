@@ -3,8 +3,7 @@ import Lean.AddDecl
 
 /-!
 A dependency with two flaws that only checking the dependency itself finds: `Dep.bogus` is ill-typed
-but never reached the kernel, and `Dep.cheat` rests on `sorry`. Without `--trust-deps`, `lake check`
-re-checks everything in scope, so this imports only what `run_elab` and `addDecl` need.
+but never reached the kernel, and `Dep.cheat` rests on `sorry`.
 -/
 
 open Lean

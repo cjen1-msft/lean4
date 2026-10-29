@@ -537,8 +537,11 @@ OPTIONS:
   --paranoid                 also run all external checkers bundled with Lean
                              besides Lean's own kernel: `leanchecker-paranoid`,
                              `lean4lean`, `nanoda`, `con-leche` and `con-ron`
-  --trust-deps               trust every dependency, and check only the root
-                             package's own modules (see below)
+  --trust-deps               trust the `.olean`s of all dependencies (including
+                             Lean core) and check only the root package's
+                             modules on top of them. Much faster, but trusts
+                             the sandboxed build's output. Cannot be combined
+                             with `--from-export` or `--paranoid`
   --inadvisably-no-sandbox   disable the built-in sandbox. This can compromise
                              the result fully and is only advised for expert
                              users.
@@ -554,28 +557,6 @@ EXPORTS:
     extensive computational resources to generate.
   - Using export files generated through means other than a standard
     `lake build`.
-
-TRUSTING DEPENDENCIES:
-  By default, everything the default targets import, Lean itself and every
-  dependency included, is exported and replayed into an empty environment, so
-  every run checks all of it again. `--trust-deps` instead trusts every module
-  outside the root package and does not export anything: `leanchecker` replays
-  only the root package's modules that the default targets bring into scope,
-  each on top of its imports as loaded from their `.olean` files. This is
-  suited to CI, where the dependencies are already checked when they are
-  built, and only the project's own code changes.
-
-  What the trust covers:
-  - A dependency's `.olean` files are taken as they are; anything wrong with
-    a dependency's own declarations goes unnoticed.
-  - The axioms policed are those the root package's declarations reach,
-    through the dependencies too. An axiom only declarations outside that
-    reach refer to is not reported.
-  - `leanchecker` still runs in the sandbox, but it maps the project's
-    `.olean` files and its exit code is the verdict.
-
-  `--trust-deps` cannot be combined with `--from-export`, which has no project
-  to check, or with `--paranoid`, whose checkers only read exports.
 
 EXIT CODES:
   0                     every selected checker accepts the project and it uses
