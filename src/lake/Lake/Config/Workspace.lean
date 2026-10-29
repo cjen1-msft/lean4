@@ -12,6 +12,7 @@ public import Lake.Config.ExternLib
 public import Lake.Config.FacetConfig
 public import Lake.Config.TargetConfig
 public import Lake.Config.LakeConfig
+import Lake.Config.PackageCache
 meta import Lake.Util.OpaqueType
 import Lean.DocString.Syntax
 import Init.Data.Range.Polymorphic.Iterators
@@ -430,6 +431,17 @@ public def augmentedEnvVars (self : Workspace) : Array (String × Option String)
   else
     vars.push (sharedLibPathEnvVar, some self.augmentedSharedLibPath.toString)
 
+/--
+Remove a package's build outputs (i.e., delete its build directory).
+If the package is linked from the global package cache, removes the link instead
+(leaving the cache entry untouched), which makes the package missing until it is rematerialized.
+-/
+public def cleanPackage (self : Workspace) (pkg : Package) : IO Unit := do
+  if (← self.lakeEnv.isCachedDir pkg.dir) then
+    IO.FS.removeFile pkg.dir
+  else
+    pkg.clean
+
 /-- Remove all packages' build outputs (i.e., delete their build directories). -/
 public def clean (self : Workspace) : IO Unit := do
-  self.packages.forM fun pkg => pkg.clean
+  self.packages.forM self.cleanPackage

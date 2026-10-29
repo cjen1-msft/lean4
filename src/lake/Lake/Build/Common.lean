@@ -11,6 +11,7 @@ public import Lake.Config.Monad
 public import Lake.Util.JsonObject
 public import Lake.Util.IO
 public import Lake.Build.Actions
+import Lake.Config.PackageCache
 
 /-! # Common Build Tools
 This file defines general utilities that abstract common
@@ -296,6 +297,32 @@ public class ToOutputJson (α : Type u) where
 public instance : ToOutputJson PUnit := ⟨fun _ => Json.null⟩
 public instance : ToOutputJson Artifact := ⟨(toJson ·.descr)⟩
 
+/-- Returns the dependency package linked from the global package cache containing `path`, if any. -/
+public def cachedPackageOf? (path : FilePath) : JobM (Option Package) := do
+  let ws ← getWorkspace
+  let some cacheDir := ws.lakeEnv.packageCacheDir? | return none
+  let sep := FilePath.pathSeparator.toString
+  let path := path.toString
+  -- Packages are only ever linked from the global package cache at `.lake/packages/<name>`
+  unless path.startsWith (ws.pkgsDir.toString ++ sep) do return none
+  ws.packages.findM? fun pkg => do
+    if path.startsWith (pkg.dir.toString ++ sep) then
+      isCachedDir cacheDir pkg.dir
+    else
+      return false
+
+/--
+If `path`, a build output about to be written, is within a dependency package linked from
+the global package cache, makes the package private so that Lake can build the output there.
+Lake never writes into the global package cache.
+-/
+public def detachCachedPackageOf (path : FilePath) : JobM Unit := do
+  if let some pkg ← cachedPackageOf? path then
+    if (← getNoBuild) then
+      modify ({· with wantsRebuild := true})
+      error s!"target is out-of-date and needs to be rebuilt"
+    detachCachedPackage pkg.prettyName pkg.dir (relPathFrom pkg.dir path).toString
+
 open ToOutputJson in
 /--
 Runs `build` as a build action of kind `action`.
@@ -313,10 +340,11 @@ and log are saved to `traceFile`, if the build completes without a fatal error
   let noBuildTraceFile := traceFile.addExtension "nobuild"
   if (← getNoBuild) then
     modify ({· with wantsRebuild := true})
-    if (← traceFile.pathExists) then
+    if (← traceFile.pathExists) && (← cachedPackageOf? traceFile).isNone then
       writeBuildTrace noBuildTraceFile depTrace Json.null {}
     error s!"target is out-of-date and needs to be rebuilt"
   else
+    detachCachedPackageOf (traceFile.withExtension "")
     let startTime ← IO.monoMsNow
     try
       let iniPos ← getLogPos
@@ -417,8 +445,10 @@ public def fetchFileHash (file : FilePath) (text := false) : JobM Hash := do
     if let some hash ← Hash.load? hashFile then
       return hash
   let hash ← computeFileHash file text
-  createParentDirs hashFile
-  IO.FS.writeFile hashFile hash.toString
+  -- Lake never writes into a package linked from the global package cache
+  if (← cachedPackageOf? hashFile).isNone then
+    createParentDirs hashFile
+    IO.FS.writeFile hashFile hash.toString
   return hash
 
 /--
@@ -708,6 +738,16 @@ public def buildArtifactUnlessUpToDate
   let traceFile := FilePath.mk <| file.toString ++ ".trace"
   let savedTrace ← readTraceFile traceFile
   if let some pkg ← getCurrPackage? then
+    -- A package linked from the global package cache is read-only:
+    -- use its up-to-date outputs as-is or make it private to rebuild them.
+    if (← cachedPackageOf? file).isSome then
+      if (← savedTrace.replayIfUpToDate file depTrace) then
+        let art ← computeArtifact file ext text
+        if let some ref ← Internal.getOutputsRef? pkg then
+          ref.insert depTrace.hash art.descr platformIndependent
+        setTrace art.trace
+        return ← setMTime art traceFile
+      detachCachedPackageOf file
     let inputHash := depTrace.hash
     let fetchArt? restore := do
       let some (art : XArtifact exe) ← getArtifacts? inputHash savedTrace pkg

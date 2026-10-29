@@ -29,6 +29,7 @@ A Lake configuration file defines the package's basic configuration. It also typ
   + [Lean `require`](#lean-require)
   + [Supported Sources](#supported-sources)
   + [TOML `require`](#toml-require)
+  + [Sharing Built Dependencies](#sharing-built-dependencies)
 * [GitHub Release Builds](#github-release-builds)
 * [Writing and Running Scripts](#writing-and-running-scripts)
 * [Building and Running Lake from the Source](#building-and-running-lake-from-the-source)
@@ -511,6 +512,14 @@ git = "<url>"
 rev = "<rev>"
 subDir = "<subDir>"
 ```
+
+### Sharing Built Dependencies
+
+Workspaces that depend on the same version of a package (e.g., Mathlib) can opt in to sharing one built copy of it with `lake cache share [<package>...]`. For each shareable dependency, Lake stores the package directory (sources and build outputs) once, read-only, in the `packages` directory of the Lake cache (e.g., `LAKE_CACHE_DIR`) and replaces the workspace's `.lake/packages/<name>` with a symbolic link to it. If no matching entry exists yet, Lake first builds the package's default targets in the workspace and then publishes it. Build outputs already present (e.g., from `lake exe cache get`) are reused, so a typical flow is `lake exe cache get` followed by `lake cache share` in the first project, and just `lake cache share` in later ones.
+
+An entry is keyed by the package's name, Git URL and revision, the Lean toolchain, the platform, its `require ... with` options, and the entries of its dependencies. Only clean Git checkouts at their manifest revision whose dependencies are also shareable are shared; path dependencies, modified checkouts, and the root package stay private.
+
+Lake never writes into a cache entry. `lake clean` and `lake update` unlink a shared package rather than modifying it. If a build needs missing or out-of-date outputs of a shared package, Lake warns that caching is not supported for built outputs, makes the package private (by copying the entry), and rebuilds it there. Entries are not evicted automatically (`lake cache clean` deletes the whole cache). Sharing is not supported on Windows.
 
 ## GitHub Release Builds
 
