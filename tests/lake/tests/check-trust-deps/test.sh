@@ -16,7 +16,7 @@ test_status_out 2 'cannot be combined with `--from-export`' check --trust-deps -
 test_status_out 2 'cannot be combined with `--paranoid`' check --trust-deps --paranoid
 
 # Each case below selects its module through `defaultTargets`, so work on a copy.
-copy_to_work lakefile.toml Good.lean Hacked.lean Cheat.lean dep
+copy_to_work lakefile.toml Good.lean Hacked.lean Hacked Cheat.lean dep
 
 # `lake check` resolves dependencies inside the sandbox, which cannot write to the project
 # directory, so the manifest has to be in place first. `dep` is a path dependency, which builds into
@@ -33,7 +33,7 @@ no_match_text 'replaying Dep' produced.out
 
 # The root package's own modules are still replayed through the kernel.
 sed_i 's/^defaultTargets = .*/defaultTargets = ["Hacked"]/' lakefile.toml
-test_status_out 1 'leanchecker found a problem in Hacked' check --trust-deps
+test_status_out 1 'leanchecker found a problem in Hacked.Inner' check --trust-deps
 match_text 'Lean default kernel rejected the solution' produced.out
 
 # Axioms are still policed through the dependencies they are reached by.

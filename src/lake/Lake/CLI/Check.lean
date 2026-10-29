@@ -710,9 +710,12 @@ public def checkRootModules (env : Lean.Environment) (modules : Array Lean.Name)
     checkUsedAxioms used
     if modules.isEmpty then return 0
     IO.println "Running Lean default kernel on the root package's modules"
+    -- `leanchecker` checks every module a name prefixes, scanning the search path once per name, so
+    -- passing a name that another one already prefixes only costs time.
+    let targets := modules.filter fun m => !modules.any fun p => p != m && p.isPrefixOf m
     let checker ← IO.Process.spawn {
       cmd := lean.binDir / "leanchecker" |>.addExtension System.FilePath.exeExtension |>.toString
-      args := #["--verbose"] ++ modules.map (·.toString (escape := false))
+      args := #["--verbose"] ++ targets.map (·.toString (escape := false))
       env := envVars
     }
     if (← checker.wait) != 0 then

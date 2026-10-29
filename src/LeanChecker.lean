@@ -102,17 +102,13 @@ unsafe def checkOlean (args : List String) (fresh verbose silent : Bool) : IO UI
         pure mod
   let mut targetModules := []
   let sp ← searchPathRef.get
-  -- Walking the search path is costly with many `.olean`s on it, so do it once for every target.
-  let mut allModules := #[]
-  for path in (← SearchPath.findAllWithExt sp "olean") do
-    if let some m := (← searchModuleNameOfFileName path sp) then
-      allModules := allModules.push m
   for target in targets do
     let mut found := false
-    for m in allModules do
-      if !fresh && target.isPrefixOf m || target == m then
-        targetModules := targetModules.insert m
-        found := true
+    for path in (← SearchPath.findAllWithExt sp "olean") do
+      if let some m := (← searchModuleNameOfFileName path sp) then
+        if !fresh && target.isPrefixOf m || target == m then
+          targetModules := targetModules.insert m
+          found := true
     if not found then
       throw <| IO.userError s!"Could not find any oleans for: {target}"
   if fresh then
